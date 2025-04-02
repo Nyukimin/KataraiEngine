@@ -1,0 +1,9 @@
+name: "gemini"
+type: "cloud"
+api_key_env: "GOOGLE_API_KEY" # APIキーを読み込む環境変数名
+default_model: "gemini-1.5-pro-latest"
+default_parameters:
+  temperature: 0.7
+  maxOutputTokens: 2048 # maxTokens から Gemini API に合わせた名前に変更
+  topP: 1.0
+  topK: 32

@@ -1,0 +1,5 @@
+id: "test_gemini_char"
+name: "Gemini Test Character"
+description: "Gemini API 疎通確認用キャラクター"
+llm_provider: "gemini"         # config/providers/gemini.yaml を参照
+personality: "test_personality" # config/personalities/test_personality.yaml を参照

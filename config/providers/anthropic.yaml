@@ -1,0 +1,9 @@
+name: "anthropic"
+type: "cloud"
+api_key_env: "ANTHROPIC_API_KEY"
+default_model: "claude-3-sonnet-20240229" # 例: Sonnetモデル
+default_parameters:
+  temperature: 0.7
+  max_tokens: 1024 # Claude API での名前
+  # top_p: 1.0 # 必要に応じて設定
+  # top_k: 50   # 必要に応じて設定 

@@ -1,0 +1,5 @@
+id: "test_claude_char"
+name: "Claude Test Character"
+description: "Claude API 疎通確認用キャラクター"
+llm_provider: "anthropic"      # config/providers/anthropic.yaml を参照
+personality: "test_personality" # config/personalities/test_personality.yaml を流用 
