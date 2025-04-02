@@ -1,150 +1,354 @@
-### 新API設計案
+# KataraiEngine 仕様書
 
-#### 1. キャラクター一覧取得 API
+## 1. 概要
 
-*   **エンドポイント:** `/api/characters`
-*   **HTTPメソッド:** `GET`
-*   **目的:** 利用可能なキャラクターの一覧（名前、ID、簡単な説明など）を取得する。UIでキャラクター選択肢を表示するために使用します。
+**アプリケーション名:** KataraiEngine
+
+本ドキュメントは、複数のLLM（大規模言語モデル）プロバイダーとキャラクター設定を組み合わせて対話を実現するバックエンドエンジン「KataraiEngine」の仕様を定義します。
+コアロジックをライブラリとして独立させ、HTTP API経由で利用可能にすることで、再利用性と保守性を高めます。
+
+## 2. アーキテクチャ
+
+### 2.1. 主要コンポーネント
+
+本アプリケーションは、以下の主要な層で構成されます。
+
+*   **コアロジック層 (`katarai_engine.core`):**
+    *   **役割:** 設定ファイルの読み込み、パラメータのマージ、プロンプト生成、LLMプロバイダーとの通信、応答の整形など、チャット機能の中核的なロジックを担当します。
+    *   **実装:** Pythonのパッケージとして実装され、関数やクラス群を提供します。他の層からライブラリとして利用可能です。
+    *   **依存:** `PyYAML`, `python-dotenv`, 各LLMプロバイダーのSDK (`google-generativeai`, `anthropic` など)。
+
+*   **HTTPインターフェース層 (`katarai_engine.interfaces.api`):**
+    *   **役割:** 外部からのHTTPリクエストを受け付け、リクエスト内容を解析し、コアロジック層を呼び出します。コアロジック層からの結果（データやストリーム）を適切なHTTPレスポンス（JSON、Server-Sent Events）に変換してクライアントに返却します。
+    *   **実装:** Webフレームワーク（例: FastAPI, Flask）を用いて実装されます。（**注:** この層は現時点では未実装です。）
+    *   **依存:** `katarai_engine.core`, Webフレームワーク。
+
+### 2.2. フォルダ構成
+
+```
+KataraiEngine/
+├── .env                 # APIキーなどの機密情報を格納 (Git管理外)
+├── .gitignore           # Gitで追跡しないファイルを指定
+├── LICENSE              # ライセンスファイル
+├── README.md            # プロジェクトの説明
+├── requirements.txt     # Python依存ライブラリ一覧
+├── specify.md           # ★この仕様書ファイル
+│
+├── config/              # 設定ファイル (YAML) を格納
+│   ├── characters/      # キャラクター定義
+│   │   ├── *.yaml
+│   │   └── .gitkeep
+│   ├── personalities/   # 個性テンプレート
+│   │   ├── *.yaml
+│   │   └── .gitkeep
+│   └── providers/       # LLMプロバイダー設定
+│       ├── *.yaml
+│       └── .gitkeep
+│
+├── katarai_engine/      # Pythonソースコードのルートパッケージ
+│   ├── __init__.py
+│   │
+│   ├── core/            # コアロジック層
+│   │   ├── __init__.py
+│   │   ├── chat.py        # チャット実行の中核関数 (execute_chat_streamなど)
+│   │   ├── config.py      # 設定ファイルの読み込み、検証、マージ
+│   │   ├── models.py      # データ構造定義 (Pydanticモデルなど)
+│   │   ├── prompt.py      # LLMプロンプト生成ロジック
+│   │   └── providers/     # LLMプロバイダー通信
+│   │       ├── __init__.py
+│   │       ├── base.py      # プロバイダ共通インターフェース/基底クラス
+│   │       ├── gemini.py    # Geminiクライアント実装
+│   │       ├── anthropic.py # Anthropic (Claude) クライアント実装
+│   │       └── ollama.py    # (将来用) Ollamaクライアント実装
+│   │
+│   └── interfaces/      # (将来用) 外部インターフェース層
+│       ├── __init__.py
+│       └── api/         # (将来用) HTTP API実装
+│           └── ...
+│
+├── tests/               # テストコード
+│   ├── __init__.py
+│   ├── core/            # コアロジック層のテスト
+│   │   ├── __init__.py
+│   │   └── .gitkeep     # (例: test_config.py, test_chat.py)
+│   └── interfaces/      # (将来用) インターフェース層のテスト
+│       └── ...
+│
+└── # 疎通確認用スクリプト (開発用、将来的には削除またはtests/へ移動)
+    ├── test_gemini.py
+    └── test_claude.py
+```
+
+## 3. API仕様 (HTTPインターフェース層)
+
+**注:** このセクションは将来実装されるHTTPインターフェース層の**設計案**です。
+
+### 3.1. キャラクター一覧取得 API (`GET /api/characters`)
+
+*   **目的:** 利用可能なキャラクターの一覧情報を取得します。
 *   **レスポンス (JSON):**
-    ```json
-    [
-      {
-        "id": "hikari",
-        "name": "ヒカリ",
-        "description": "明るく親切なアシスタント。",
-        "llm_provider": "gemini",
-        "personality": "明るいアシスタント"
-      },
-      {
-        "id": "kenji",
-        "name": "ケンジ",
-        "description": "コード分析が得意な専門家。",
-        "llm_provider": "ollama",
-        "personality": "専門的な分析官"
-      },
-      // ... 他のキャラクター
-    ]
-    ```
+    *   **成功時 (200 OK):** キャラクター情報の配列。
+        ```json
+        [
+          {
+            "id": "string", // キャラクターID (config/characters/ のファイル名)
+            "name": "string", // キャラクター名
+            "description": "string", // キャラクターの説明
+            "llm_provider": "string", // 使用するLLMプロバイダー名
+            "personality": "string" // 使用する個性テンプレート名
+          },
+          // ...
+        ]
+        ```
+    *   **失敗時:** 標準的なHTTPエラーレスポンス (例: 500 Internal Server Error)。
 
-#### 2. チャット実行 API
+### 3.2. チャット実行 API (`POST /api/chat`)
 
-*   **エンドポイント:** `/api/chat` （既存の `/api/chat` GET とは別の、新しいエンドポイントとして考えます）
-*   **HTTPメソッド:** `POST`
-*   **目的:** 指定したキャラクターと対話し、応答をストリーミング形式で受け取る。
+*   **目的:** 指定したキャラクターと対話し、応答をストリーミング形式で取得します。
 *   **リクエストボディ (JSON):**
     ```json
     {
-      "characterId": "hikari", // 対話したいキャラクターのID
-      "prompt": "今日の天気について教えてください。", // ユーザーからのメッセージ
-      "history": [ // (オプション) 会話履歴
-        { "role": "user", "content": "こんにちは" },
-        { "role": "assistant", "content": "こんにちは！何かお手伝いできることはありますか？" }
+      "characterId": "string", // 必須: 対話するキャラクターのID
+      "prompt": "string", // 必須: ユーザーからの最新のメッセージ
+      "history": [ // オプション: 会話履歴 (古い順)
+        { "role": "user", "content": "string" },
+        { "role": "assistant", "content": "string" }
       ],
-      "requestId": "client-generated-id-123" // (オプション) クライアント生成のリクエストID
+      "requestId": "string | null" // オプション: クライアント側で生成したリクエストID
     }
     ```
 *   **レスポンス:**
-    *   **成功時 (ステータスコード 200):**
-        *   `Content-Type: text/event-stream`
-        *   ストリーミング形式でデータが返される (既存の `/api/chat` GET と同様の形式を想定)。
-            *   最初のチャンク: `{ "requestId": "<generated_or_provided_request_id>" }`
-            *   後続のチャンク: `{ "text": "<llm_response_chunk>", "requestId": "<generated_or_provided_request_id>" }`
-    *   **エラー時 (JSON):**
-        *   キャラクターが見つからない (404): `{ "error": "指定されたキャラクターが見つかりません", "requestId": "..." }`
-        *   リクエスト形式が不正 (400): `{ "error": "characterIdとpromptは必須です", "requestId": "..." }`
-        *   内部サーバーエラー (500): `{ "error": "...", "requestId": "..." }`
+    *   **成功時 (200 OK):**
+        *   `Content-Type: text/event-stream; charset=utf-8`
+        *   Server-Sent Events (SSE) 形式で応答チャンクをストリーミング。
+        *   **イベント: `request_id`** (接続確立直後)
+            ```sse
+            event: request_id
+            data: {"requestId": "server-generated-or-provided-id"}
+            ```
+        *   **イベント: `text_chunk`** (LLMからの応答チャンクごと)
+            ```sse
+            event: text_chunk
+            data: {"text": "LLMからの応答の一部", "requestId": "..."}
+            ```
+        *   **イベント: `error`** (ストリーミング中のエラー発生時)
+            ```sse
+            event: error
+            data: {"error": "エラーメッセージ", "requestId": "..."}
+            ```
+        *   **イベント: `end`** (ストリーム終了時)
+            ```sse
+            event: end
+            data: {"requestId": "..."}
+            ```
+    *   **失敗時 (非ストリーミングエラー):**
+        *   **400 Bad Request (JSON):** リクエスト形式が不正 (必須パラメータ欠如など)。
+            ```json
+            { "error": "詳細なエラーメッセージ", "requestId": "..." }
+            ```
+        *   **404 Not Found (JSON):** 指定された `characterId` が存在しない。
+            ```json
+            { "error": "キャラクターが見つかりません", "requestId": "..." }
+            ```
+        *   **500 Internal Server Error (JSON):** サーバー内部で予期せぬエラーが発生。
+            ```json
+            { "error": "内部サーバーエラーが発生しました", "requestId": "..." }
+            ```
 
----
+## 4. コアロジック層 (`katarai_engine.core`)
 
-### 設定ファイル構成案
+### 4.1. 設定ファイル (`config/`)
 
-これらのAPIを実現するために、以下のような設定ファイル構成を考えます (YAML形式を想定)。
+*   **形式:** YAML
+*   **文字コード:** UTF-8
+*   **構造:**
+    *   `config/providers/{provider_name}.yaml`: LLMプロバイダー固有の設定。
+    *   `config/personalities/{personality_name}.yaml`: キャラクターの個性（システムプロンプトなど）を定義。
+    *   `config/characters/{character_id}.yaml`: プロバイダーと個性を組み合わせ、最終的なキャラクターを定義。
 
-1.  **LLMプロバイダー設定 (`config/providers/*.yaml`)**
-    *   既存のファイルを流用または拡張し、LLMバックエンドごとの接続情報や基本パラメータを定義します。
-    *   例: `config/providers/gemini.yaml`
-        ```yaml
-        name: "gemini"
-        type: "cloud"
-        # ... (APIキーの環境変数名など)
-        default_model: "gemini-1.5-pro-latest"
-        default_parameters:
-          temperature: 0.7
-          maxTokens: 2048
-        ```
-    *   例: `config/providers/ollama.yaml`
-        ```yaml
-        name: "ollama"
-        type: "local"
-        baseUrlEnv: "NEXT_PUBLIC_OLLAMA_BASE_URL"
-        default_model: "phi-4-deepseek-R1K-RL-EZO-GGUF:Q4_K_S" # モデルをファイルで指定
-        default_parameters:
-          temperature: 0.6
-        ```
+### 4.2. 設定ファイルのスキーマと詳細
 
-2.  **個性テンプレート設定 (`config/personalities/*.yaml`)**
-    *   キャラクターの性格や口調を定義するファイルを新規に作成します。
-    *   例: `config/personalities/明るいアシスタント.yaml`
-        ```yaml
-        name: "明るいアシスタント"
-        system_prompt: |
-          あなたは「ヒカリ」という名前の、明るく親切なAIアシスタントです。
-          ユーザーの質問には、常に丁寧で前向きな言葉遣いで答えてください。
-          専門的な知識も持っていますが、難しい言葉は避けて分かりやすく説明します。
-          絵文字を適度に使って、親しみやすい雰囲気を出してください。😄
-        default_parameters: # 個性によってデフォルトパラメータを上書き
-          temperature: 0.8
-        ```
-    *   例: `config/personalities/専門的な分析官.yaml`
-        ```yaml
-        name: "専門的な分析官"
-        system_prompt: |
-          あなたは「ケンジ」という名前の、冷静沈着な分析官AIです。
-          提供された情報に基づいて、客観的かつ論理的に分析し、簡潔に結論を述べてください。
-          感情的な表現や冗長な言い回しは避けてください。
-          特にコードや技術的な内容に関する分析を得意とします。
-        default_parameters:
-          temperature: 0.2
-        ```
+#### 4.2.1. プロバイダー設定 (`config/providers/{provider_name}.yaml`)
 
-3.  **キャラクター定義 (`config/characters/*.yaml`)**
-    *   LLMプロバイダーと個性テンプレートを組み合わせてキャラクターを定義するファイルを新規に作成します。ファイル名がキャラクターID (`hikari.yaml` -> `id: "hikari"`) になります。
-    *   例: `config/characters/hikari.yaml`
-        ```yaml
-        id: "hikari" # ファイル名と一致させる
-        name: "ヒカリ"
-        description: "明るく親切なアシスタント。"
-        llm_provider: "gemini"        # 使用する config/providers/ のファイル名 (拡張子除く)
-        personality: "明るいアシスタント" # 使用する config/personalities/ のファイル名 (拡張子除く)
-        # 必要であれば、ここでさらにパラメータを上書き
-        parameters:
-          maxTokens: 1024
-        ```
-    *   例: `config/characters/kenji.yaml`
-        ```yaml
-        id: "kenji"
-        name: "ケンジ"
-        description: "コード分析が得意な専門家。"
-        llm_provider: "ollama"
-        personality: "専門的な分析官"
-        parameters:
-          # Ollamaの特定のモデルを使いたい場合はここで指定 (providerのデフォルトを上書き)
-          # model: "codellama:7b"
-          temperature: 0.1 # personalityのデフォルトをさらに上書き
-        ```
+```yaml
+# 必須: プロバイダー名 (ファイル名と一致させる)
+name: string
 
----
+# 必須: プロバイダーのタイプ ("cloud" または "local")
+type: string # "cloud" | "local"
 
-### チャットAPI (`POST /api/chat`) の処理フロー案
+# 必須 (type="cloud"): APIキーを読み込む環境変数名
+api_key_env: string | null
 
-1.  リクエストボディから `characterId`, `prompt`, `history` を受け取る。
-2.  `config/characters/` ディレクトリから `{characterId}.yaml` ファイルを探して読み込む。見つからなければ404エラー。
-3.  キャラクター定義ファイルから `llm_provider` と `personality` の名前を取得する。
-4.  `config/providers/{llm_provider}.yaml` と `config/personalities/{personality}.yaml` を読み込む。
-5.  個性テンプレートから `system_prompt` を取得する。
-6.  LLMに渡す最終的なプロンプトを作成する。システムプロンプト、会話履歴 (`history`)、ユーザーの最新プロンプト (`prompt`) を組み合わせる。 (組み合わせ方はLLMの作法に合わせる)
-7.  LLMのパラメータを決定する。`providers` → `personalities` → `characters` の順で設定をマージ（後から読み込んだもので上書き）し、最終的な `temperature`, `maxTokens` などを決定する。
-8.  決定したパラメータとプロンプト、LLMプロバイダー設定（APIキーなど）を使って、対応するLLM APIを呼び出す。
-9.  LLMからの応答をストリーミングで受け取り、`text/event-stream` 形式でクライアントに中継する。
+# オプション (type="local"): ベースURLを読み込む環境変数名
+base_url_env: string | null
 
----
+# オプション: デフォルトで使用するモデル名
+default_model: string | null
+
+# オプション: プロバイダー固有のデフォルトパラメータ
+# キー名は各LLM APIの仕様に準拠する
+default_parameters:
+  temperature: float | null
+  max_tokens: int | null # 例: Claude
+  maxOutputTokens: int | null # 例: Gemini
+  top_p: float | null
+  top_k: int | null
+  # ... その他のプロバイダー固有パラメータ
+```
+
+#### 4.2.2. 個性設定 (`config/personalities/{personality_name}.yaml`)
+
+```yaml
+# 必須: 個性名 (ファイル名と一致させる)
+name: string
+
+# 必須: LLMに渡すシステムプロンプト (キャラクターの役割、口調、指示など)
+system_prompt: string
+
+# オプション: この個性に紐づくデフォルトパラメータ (プロバイダー設定を上書き)
+# キー名は各LLM APIの仕様に準拠する
+default_parameters:
+  temperature: float | null
+  max_tokens: int | null
+  # ...
+```
+
+#### 4.2.3. キャラクター設定 (`config/characters/{character_id}.yaml`)
+
+```yaml
+# 必須: キャラクターID (ファイル名と一致させる)
+id: string
+
+# 必須: キャラクターの表示名
+name: string
+
+# オプション: キャラクターの説明
+description: string | null
+
+# 必須: 使用するLLMプロバイダー名 (config/providers/ のファイル名)
+llm_provider: string
+
+# 必須: 使用する個性名 (config/personalities/ のファイル名)
+personality: string
+
+# オプション: このキャラクター固有のパラメータ (個性、プロバイダー設定を上書き)
+# キー名は各LLM APIの仕様に準拠する
+parameters:
+  model: string | null # 特定のモデルを使用する場合
+  temperature: float | null
+  max_tokens: int | null
+  # ...
+```
+
+### 4.3. パラメータのマージルール
+
+LLM呼び出し時の最終的なパラメータは、以下の優先順位でマージされます（後者が優先）。
+
+1.  プロバイダー設定 (`providers/*.yaml`) の `default_parameters`
+2.  個性設定 (`personalities/*.yaml`) の `default_parameters`
+3.  キャラクター設定 (`characters/*.yaml`) の `parameters`
+
+### 4.4. 主要な関数/クラス (予定)
+
+*   **`katarai_engine.core.config`:**
+    *   `load_character_config(character_id: str) -> CharacterConfig`: キャラクター設定を読み込み、関連するプロバイダー/個性設定も解決・マージして返す。
+    *   `get_available_characters() -> list[CharacterInfo]`: 利用可能なキャラクター一覧情報を返す。
+*   **`katarai_engine.core.models`:**
+    *   Pydanticモデルなどを用いて、上記YAMLスキーマに対応するデータクラスを定義。バリデーションも行う。
+*   **`katarai_engine.core.prompt`:**
+    *   `build_llm_prompt(system_prompt: str, history: list[dict], user_prompt: str, provider_type: str) -> Any`: 各LLMプロバイダーのAPI形式に合わせたプロンプト（メッセージリストなど）を構築する。
+*   **`katarai_engine.core.providers.base.LLMProvider`:**
+    *   プロバイダー共通の抽象基底クラス。`generate_stream(...)` メソッドなどを定義。
+*   **`katarai_engine.core.providers.{gemini|anthropic|...}`:**
+    *   各プロバイダー固有の実装クラス。`LLMProvider` を継承。
+*   **`katarai_engine.core.chat.execute_chat_stream(...)`:**
+    *   チャット実行のエントリーポイント。設定読み込み、プロンプト生成、プロバイダー選択、LLM呼び出し、応答ストリーム生成を行う。
+
+## 5. セットアップと依存関係
+
+### 5.1. 必要なツール
+
+*   Python (バージョン 3.9 以上推奨)
+*   pip (Pythonパッケージインストーラ)
+*   Git
+
+### 5.2. 依存ライブラリ (`requirements.txt`)
+
+```
+PyYAML>=6.0
+python-dotenv>=1.0.0
+google-generativeai>=0.8.0 # Gemini API用
+anthropic>=0.49.0         # Anthropic (Claude) API用
+# --- Webフレームワーク (HTTPインターフェース層実装時) ---
+# fastapi>=0.100.0
+# uvicorn>=0.20.0
+# pydantic>=2.0 # データモデル用 (FastAPI依存でもある)
+# sse-starlette>=1.0 # Server-Sent Events用
+```
+
+### 5.3. 環境変数 (`.env` ファイル)
+
+プロジェクトルートに `.env` ファイルを作成し、必要なAPIキーなどを記述します。このファイルは `.gitignore` によりGit管理対象外です。
+
+```dotenv
+# AI API Keys
+GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
+ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
+
+# (オプション) Ollama などローカルLLM用
+# NEXT_PUBLIC_OLLAMA_BASE_URL="http://localhost:11434"
+```
+
+### 5.4. インストール
+
+```bash
+# 1. リポジトリをクローン (既に実施済み)
+# git clone <repository_url>
+# cd KataraiEngine
+
+# 2. (推奨) 仮想環境を作成してアクティベート
+python -m venv .venv
+# Windows (PowerShell)
+# .\.venv\Scripts\Activate.ps1
+# Windows (cmd)
+# .\.venv\Scripts\activate.bat
+# Linux/macOS
+# source .venv/bin/activate
+
+# 3. 依存ライブラリをインストール
+pip install -r requirements.txt
+```
+
+## 6. LLM疎通確認
+
+開発初期段階で、主要なLLMプロバイダーとの接続を確認するために以下のスクリプトが作成されました。
+
+*   `test_gemini.py`: Gemini APIとの疎通確認。
+*   `test_claude.py`: Anthropic (Claude) APIとの疎通確認。
+
+これらのスクリプトは、対応する設定ファイル (`config/providers/`, `config/personalities/`, `config/characters/` 内のテスト用ファイル) と `.env` ファイルのAPIキーが必要です。
+
+**実行方法:**
+
+```bash
+# (仮想環境がアクティブな状態で)
+python test_gemini.py
+python test_claude.py
+```
+
+「疎通確認成功！」と表示されれば、接続は正常です。
+
+## 7. 今後の開発タスク (例)
+
+*   コアロジック層 (`katarai_engine.core`) の詳細実装。
+    *   `models.py`: Pydanticモデル定義。
+    *   `config.py`: 設定読み込み、マージ、バリデーション実装。
+    *   `providers/base.py`, `providers/gemini.py`, `providers/anthropic.py`: プロバイダー抽象化と実装。
+    *   `prompt.py`: プロンプト構築ロジック。
+    *   `chat.py`: `execute_chat_stream` 関数の実装。
+*   HTTPインターフェース層 (`katarai_engine.interfaces.api`) の実装 (FastAPI等を使用)。
+*   単体テスト、結合テストの作成 (`tests/`)。
+*   ロギング機構の導入。
+*   エラーハンドリングの強化。
+*   Ollama など他のプロバイダーへの対応。
