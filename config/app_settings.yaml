@@ -1,0 +1,9 @@
+# Ollama Settings
+ollama:
+  host: http://localhost:11434
+  model: deepseek-r1:1.5b:online
+
+# App Settings
+app:
+  chat_speed: 5
+  debug_mode: false 

@@ -1,5 +1,5 @@
-name: "Test Personality"
-system_prompt: |-
-  あなたはテスト用のAIです。受け取ったメッセージをそのまま繰り返してください。
+name: test_personality
+system_prompt: "あなたは親切で丁寧なAIアシスタントです。ユーザーの質問に対して、簡潔かつ分かりやすい日本語で回答してください。"
+
 default_parameters:
-  temperature: 0.1 # 繰り返しやすくするため低めに設定
+  temperature: 0.7
